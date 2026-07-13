@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>İTKAN | Ders Katılım</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --blue:#4C9FE8;
+    --blue-dark:#3D87CC;
+    --red:#D9534F;
+    --red-dark:#C0392B;
+    --green:#4CAF50;
+    --green-dark:#3D8B40;
+    --bg:#EAF3E8;
+    --card:#FFFFFF;
+    --text:#1c1c1c;
+    --muted:#6b7a72;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,"Segoe UI",Tahoma,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    padding:14px;
+  }
+  .header{
+    text-align:center;
+    padding:14px 10px;
+    background:var(--card);
+    border-radius:14px;
+    margin-bottom:14px;
+    font-weight:700;
+    font-size:15px;
+    color:#2f6b3a;
+  }
+  .btn-row{
+    display:flex;
+    gap:10px;
+    margin-bottom:10px;
+  }
+  .btn{
+    flex:1;
+    border:none;
+    border-radius:12px;
+    padding:16px 8px;
+    font-size:15px;
+    font-weight:700;
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    cursor:pointer;
+    transition:transform .08s ease, opacity .15s ease;
+  }
+  .btn:active{transform:scale(0.97); opacity:.9;}
+  .btn.full{width:100%;}
+  .blue{background:var(--blue);}
+  .blue:active{background:var(--blue-dark);}
+  .red{background:var(--red);}
+  .red:active{background:var(--red-dark);}
+  .green{background:var(--green);}
+  .green:active{background:var(--green-dark);}
+  .btn.locked{opacity:.55; cursor:not-allowed;}
+  .btn.locked:active{transform:none;}
+
+  .list-card{
+    background:var(--card);
+    border-radius:14px;
+    padding:14px;
+    margin-top:16px;
+  }
+  .list-title{
+    font-weight:700;
+    font-size:14px;
+    margin:10px 0 8px;
+    color:#2f6b3a;
+  }
+  .person-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:9px 10px;
+    border-radius:10px;
+    background:#F3F8F2;
+    margin-bottom:6px;
+    font-size:14px;
+  }
+  .person-row.done{
+    background:#E7F5E8;
+  }
+  .empty{
+    color:var(--muted);
+    font-size:13px;
+    padding:6px 4px;
+  }
+  .status-pill{
+    font-size:11px;
+    padding:2px 8px;
+    border-radius:20px;
+    background:var(--green);
+    color:#fff;
+  }
+  .toast{
+    position:fixed;
+    bottom:20px;
+    left:50%;
+    transform:translateX(-50%);
+    background:#222;
+    color:#fff;
+    padding:10px 18px;
+    border-radius:20px;
+    font-size:13px;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .25s ease;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+  <div class="header">🔸🔶 İTKAN | Kur'an Akademisi 🔶🔸</div>
+
+  <div class="btn-row">
+    <button class="btn blue" id="joinBtn">📝 Katılıyorum</button>
+    <button class="btn red" id="leaveBtn">❌ Kaydımı Sil</button>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn green full" id="doneBtn">✅ Okudum</button>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn blue" id="openBtn">🔓 Listeyi Aç</button>
+    <button class="btn red" id="closeBtn">🔒 Listeyi Kapat</button>
+  </div>
+
+  <div class="list-card">
+    <div class="list-title">🔸 Katılımcılar</div>
+    <div id="participantsList"></div>
+
+    <div class="list-title">🔸 Dinleyiciler</div>
+    <div id="listenersList"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+// ------------------------------------------------------------
+// Bot bağlantı noktası: sunucu adresinizi buraya girin
+// Botu çalıştıran aynı sunucu (Flask/FastAPI) bu uç noktaları sağlar
+// ------------------------------------------------------------
+const API_BASE = window.location.origin + "/api";
+const urlParams = new URLSearchParams(window.location.search);
+const CHAT_ID = urlParams.get("chat_id") || "default";
+
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"), 1800);
+}
+
+function authHeaders(){
+  // initData, kullanıcı kimliğini sunucuya güvenli şekilde doğrular (imza kontrolü backend'de yapılır)
+  return {
+    "Content-Type": "application/json",
+    "X-Telegram-Init-Data": tg?.initData || ""
+  };
+}
+
+async function callAction(action){
+  try{
+    const res = await fetch(`${API_BASE}/action`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ action, chat_id: CHAT_ID })
+    });
+    const data = await res.json();
+    if(data.message) toast(data.message);
+    if(data.state) render(data.state);
+  }catch(e){
+    toast("⚠️ Sunucuya bağlanılamadı");
+  }
+}
+
+function render(state){
+  const pList = document.getElementById("participantsList");
+  const lList = document.getElementById("listenersList");
+
+  pList.innerHTML = "";
+  if(!state.participants || Object.keys(state.participants).length === 0){
+    pList.innerHTML = `<div class="empty">Henüz kimse yok</div>`;
+  } else {
+    Object.entries(state.participants).forEach(([name, done])=>{
+      pList.innerHTML += `
+        <div class="person-row ${done ? "done" : ""}">
+          <span>${name}</span>
+          ${done ? `<span class="status-pill">✅ Tamamlandı</span>` : ""}
+        </div>`;
+    });
+  }
+
+  lList.innerHTML = "";
+  if(!state.listeners || state.listeners.length === 0){
+    lList.innerHTML = `<div class="empty">Henüz kimse yok</div>`;
+  } else {
+    state.listeners.forEach(name=>{
+      lList.innerHTML += `<div class="person-row"><span>${name}</span></div>`;
+    });
+  }
+
+  const locked = !state.active;
+  [document.getElementById("joinBtn"), document.getElementById("doneBtn")]
+    .forEach(b => b.classList.toggle("locked", locked));
+}
+
+document.getElementById("joinBtn").onclick  = ()=>callAction("join");
+document.getElementById("leaveBtn").onclick = ()=>callAction("leave");
+document.getElementById("doneBtn").onclick  = ()=>callAction("done");
+document.getElementById("openBtn").onclick  = ()=>callAction("open");
+document.getElementById("closeBtn").onclick = ()=>callAction("close");
+
+// Mini uygulama açıldığında mevcut durumu yükle
+async function loadState(){
+  try{
+    const res = await fetch(`${API_BASE}/state?chat_id=${CHAT_ID}`, { headers: authHeaders() });
+    const data = await res.json();
+    render(data.state || { participants:{}, listeners:[], active:false });
+  }catch(e){
+    render({ participants:{}, listeners:[], active:false });
+  }
+}
+loadState();
+</script>
+</body>
+  </html>
