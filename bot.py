@@ -1,8 +1,9 @@
-   import os
+import os
 import json
 import hmac
 import hashlib
 import threading
+import requests
 from urllib.parse import parse_qsl
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -32,7 +33,25 @@ def check_init_data(init_data: str) -> bool:
     calc_hash = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(calc_hash, received_hash)
 
-def get_display_name(init_data: str) -> str:
+def get_user_id(init_data: str) -> int | None:
+    parsed = dict(parse_qsl(init_data))
+    user_raw = parsed.get("user")
+    if not user_raw:
+        return None
+    return json.loads(user_raw).get("id")
+
+def is_admin_sync(chat_id: str, user_id: int) -> bool:
+    try:
+        res = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/getChatMember",
+            params={"chat_id": chat_id, "user_id": user_id},
+            timeout=5
+        )
+        data = res.json()
+        status = data.get("result", {}).get("status")
+        return status in ("administrator", "creator")
+    except:
+        return False
     parsed = dict(parse_qsl(init_data))
     user_raw = parsed.get("user")
     if not user_raw:
@@ -91,10 +110,14 @@ def api_action():
             message = "Henüz katılmadın"
 
     elif action == "open":
+        if not is_admin_sync(chat_id, get_user_id(init_data)):
+            return jsonify({"state": group, "message": "⛔️ Sadece yönetici açabilir"})
         group["active"] = True
         message = "🔓 Liste açıldı"
 
     elif action == "close":
+        if not is_admin_sync(chat_id, get_user_id(init_data)):
+            return jsonify({"state": group, "message": "⛔️ Sadece yönetici kapatabilir"})
         group["active"] = False
         message = "🔒 Liste kapatıldı"
 
@@ -303,4 +326,4 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main() 
+    main()
