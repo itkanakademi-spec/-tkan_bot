@@ -210,7 +210,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("✅ Tebrikler, işaretlendi")
 
     save_state()
-    await query.edit_message_text(build_text(group), reply_markup=build_keyboard(), parse_mode="Markdown")
+    try:
+        await query.edit_message_text(build_text(group), reply_markup=build_keyboard(), parse_mode="Markdown")
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            raise
 
 # --------------------------
 # Main
