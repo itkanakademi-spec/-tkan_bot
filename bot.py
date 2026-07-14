@@ -146,6 +146,8 @@ def load_state():
 # Yardımcı Fonksiyonlar
 # --------------------------
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == "private":
+        return True
     user_id = update.effective_user.id
     admins = await context.bot.get_chat_administrators(update.effective_chat.id)
     return any(a.user.id == user_id for a in admins)
