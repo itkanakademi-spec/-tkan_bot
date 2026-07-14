@@ -19,6 +19,9 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
     def log_message(self, format, *args):
         pass
 
@@ -118,23 +121,23 @@ def build_keyboard():
 # /start Komutu
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        try:
+            await update.message.delete()
+        except:
+            pass
+        return
+
     try:
         await update.message.delete()
     except:
         pass
 
-    if not await is_admin(update, context):
-        return
-
     chat_id = str(update.effective_chat.id)
     group = get_group(chat_id)
 
     if group["active"]:
-        if group["message_id"]:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=group["message_id"])
-            except:
-                pass
+        old_message_id = group["message_id"]
 
         msg = await context.bot.send_message(
             chat_id=chat_id,
@@ -143,6 +146,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         group["message_id"] = msg.message_id
+
+        if old_message_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=old_message_id)
+            except:
+                pass
         save_state()
         return
 
