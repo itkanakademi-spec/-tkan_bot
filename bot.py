@@ -1,131 +1,30 @@
 import os
 import json
-import hmac
-import hashlib
 import threading
-import requests
-from urllib.parse import parse_qsl
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from flask import Flask, request, jsonify, send_from_directory
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://YOUR-SERVER-DOMAIN")  # index.html buradan servis edilecek
 STATE_FILE = "state.json"
 
 groups = {}
 
 # --------------------------
-# Flask (Mini App backend + statik dosya)
+# Dummy HTTP Server (Render port gereksinimi için)
 # --------------------------
-flask_app = Flask(__name__, static_folder=".", static_url_path="")
-
-def check_init_data(init_data: str) -> bool:
-    if not init_data or not TOKEN:
-        return False
-    parsed = dict(parse_qsl(init_data))
-    received_hash = parsed.pop("hash", None)
-    if not received_hash:
-        return False
-    check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
-    secret_key = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
-    calc_hash = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(calc_hash, received_hash)
-
-def get_user_id(init_data: str) -> int | None:
-    parsed = dict(parse_qsl(init_data))
-    user_raw = parsed.get("user")
-    if not user_raw:
-        return None
-    return json.loads(user_raw).get("id")
-
-def is_admin_sync(chat_id: str, user_id: int) -> bool:
-    try:
-        res = requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/getChatMember",
-            params={"chat_id": chat_id, "user_id": user_id},
-            timeout=5
-        )
-        data = res.json()
-        status = data.get("result", {}).get("status")
-        return status in ("administrator", "creator")
-    except:
-        return False
-    parsed = dict(parse_qsl(init_data))
-    user_raw = parsed.get("user")
-    if not user_raw:
-        return "Bilinmiyor"
-    user = json.loads(user_raw)
-    return user.get("first_name", "") + ((" " + user["last_name"]) if user.get("last_name") else "")
-
-@flask_app.route("/")
-def serve_index():
-    return send_from_directory(".", "index.html")
-
-@flask_app.route("/api/state", methods=["GET"])
-def api_state():
-    init_data = request.headers.get("X-Telegram-Init-Data", "")
-    if not check_init_data(init_data):
-        return jsonify({"error": "invalid init data"}), 403
-
-    chat_id = request.args.get("chat_id", "default")
-    group = get_group(chat_id)
-    return jsonify({"state": group})
-
-@flask_app.route("/api/action", methods=["POST"])
-def api_action():
-    init_data = request.headers.get("X-Telegram-Init-Data", "")
-    if not check_init_data(init_data):
-        return jsonify({"error": "invalid init data"}), 403
-
-    body = request.get_json(force=True)
-    chat_id = body.get("chat_id", "default")
-    action = body.get("action")
-    name = get_display_name(init_data)
-
-    group = get_group(chat_id)
-    message = ""
-
-    if action in ("join", "done") and not group["active"]:
-        return jsonify({"state": group, "message": "⛔️ Kayıt kapalı"})
-
-    if action == "join":
-        if name in group["listeners"]:
-            group["listeners"].remove(name)
-        group["participants"][name] = False
-        message = "🌸 Katılımın kaydedildi"
-
-    elif action == "leave":
-        group["participants"].pop(name, None)
-        if name in group["listeners"]:
-            group["listeners"].remove(name)
-        message = "🗑️ Kaydın silindi"
-
-    elif action == "done":
-        if name in group["participants"]:
-            group["participants"][name] = True
-            message = "✅ Tebrikler, işaretlendi"
-        else:
-            message = "Henüz katılmadın"
-
-    elif action == "open":
-        if not is_admin_sync(chat_id, get_user_id(init_data)):
-            return jsonify({"state": group, "message": "⛔️ Sadece yönetici açabilir"})
-        group["active"] = True
-        message = "🔓 Liste açıldı"
-
-    elif action == "close":
-        if not is_admin_sync(chat_id, get_user_id(init_data)):
-            return jsonify({"state": group, "message": "⛔️ Sadece yönetici kapatabilir"})
-        group["active"] = False
-        message = "🔒 Liste kapatıldı"
-
-    save_state()
-    return jsonify({"state": group, "message": message})
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
 
 def run_server():
-    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 1551)))
+    port = int(os.getenv("PORT", 10000))
+    HTTPServer(("0.0.0.0", port), DummyHandler).serve_forever()
 
 # --------------------------
 # Veri Kaydetme
@@ -199,21 +98,19 @@ def build_text(group):
 
     return text
 
-def build_keyboard(chat_id):
-    webapp_url = f"{WEBAPP_URL}/?chat_id={chat_id}"
+def build_keyboard():
+    # style parametresi: 'primary' (mavi), 'success' (yeşil), 'danger' (kırmızı)
+    # Not: Renkler yalnızca 9 Şubat 2026 sonrası Telegram sürümlerinde görünür.
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✋🏻 Katılıyorum", callback_data="join"),
-            InlineKeyboardButton("🎧 Dinleyici", callback_data="listen"),
+            InlineKeyboardButton("✋🏻 Katılıyorum", callback_data="join", style="primary"),
+            InlineKeyboardButton("🎧 Dinleyici", callback_data="listen", style="primary"),
         ],
         [
-            InlineKeyboardButton("✅ Okudum", callback_data="done"),
+            InlineKeyboardButton("✅ Okudum", callback_data="done", style="success"),
         ],
         [
-            InlineKeyboardButton("📋 Renkli Panel", web_app=WebAppInfo(url=webapp_url)),
-        ],
-        [
-            InlineKeyboardButton("⛔️ İlanı Durdur", callback_data="stop"),
+            InlineKeyboardButton("⛔️ İlanı Durdur", callback_data="stop", style="danger"),
         ]
     ])
 
@@ -242,7 +139,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await context.bot.send_message(
             chat_id=chat_id,
             text=build_text(group),
-            reply_markup=build_keyboard(chat_id),
+            reply_markup=build_keyboard(),
             parse_mode="Markdown"
         )
         group["message_id"] = msg.message_id
@@ -256,14 +153,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=build_text(group),
-        reply_markup=build_keyboard(chat_id),
+        reply_markup=build_keyboard(),
         parse_mode="Markdown"
     )
     group["message_id"] = msg.message_id
     save_state()
 
 # --------------------------
-# Buton İşlemleri (klasik inline butonlar)
+# Buton İşlemleri
 # --------------------------
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -313,7 +210,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("✅ Tebrikler, işaretlendi")
 
     save_state()
-    await query.edit_message_text(build_text(group), reply_markup=build_keyboard(chat_id), parse_mode="Markdown")
+    await query.edit_message_text(build_text(group), reply_markup=build_keyboard(), parse_mode="Markdown")
 
 # --------------------------
 # Main
