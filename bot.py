@@ -3,13 +3,24 @@ import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+import firebase_admin
+from firebase_admin import credentials, firestore
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-STATE_FILE = "state.json"
+COLLECTION = "telegram_bot_groups"
 
 groups = {}
+
+# --------------------------
+# Firebase Bağlantısı
+# --------------------------
+firebase_json = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
+cred = credentials.Certificate(firebase_json)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 # --------------------------
 # Dummy HTTP Server (Render port gereksinimi için)
@@ -30,18 +41,21 @@ def run_server():
     HTTPServer(("0.0.0.0", port), DummyHandler).serve_forever()
 
 # --------------------------
-# Veri Kaydetme
+# Veri Kaydetme (Firestore)
 # --------------------------
-def save_state():
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(groups, f, ensure_ascii=False)
+def save_group(chat_id):
+    chat_id = str(chat_id)
+    db.collection(COLLECTION).document(chat_id).set(groups[chat_id])
 
 def load_state():
     global groups
+    groups = {}
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            groups = json.load(f)
-    except:
+        docs = db.collection(COLLECTION).stream()
+        for doc in docs:
+            groups[doc.id] = doc.to_dict()
+    except Exception as e:
+        print(f"Firestore yükleme hatası: {e}")
         groups = {}
 
 # --------------------------
@@ -152,7 +166,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.delete_message(chat_id=chat_id, message_id=old_message_id)
             except:
                 pass
-        save_state()
+        save_group(chat_id)
         return
 
     group["participants"] = {}
@@ -166,7 +180,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     group["message_id"] = msg.message_id
-    save_state()
+    save_group(chat_id)
 
 # --------------------------
 # Buton İşlemleri
@@ -183,7 +197,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await is_admin(update, context):
             return
         group["active"] = False
-        save_state()
+        save_group(chat_id)
         await query.edit_message_text(build_text(group), reply_markup=None, parse_mode="Markdown")
         return
 
@@ -218,7 +232,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group["participants"][name] = True
         await query.answer("✅ Tebrikler, işaretlendi")
 
-    save_state()
+    save_group(chat_id)
     try:
         await query.edit_message_text(build_text(group), reply_markup=build_keyboard(), parse_mode="Markdown")
     except Exception as e:
